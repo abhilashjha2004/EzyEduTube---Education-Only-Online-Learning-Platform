@@ -16,13 +16,13 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const login = async (username, password) => {
-        const res = await axios.post('http://localhost:5000/api/auth/login', { username, password });
+        const res = await axios.post('https://ezyedutube-backend.onrender.com/api/auth/login', { username, password });
         setUser(res.data);
         localStorage.setItem('user', JSON.stringify(res.data));
     };
 
     const register = async (username, password) => {
-        await axios.post('http://localhost:5000/api/auth/register', { username, password });
+        await axios.post(https://ezyedutube-backend.onrender.com/api/auth/register', { username, password });
         await login(username, password);
     };
 
