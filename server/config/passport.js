@@ -18,7 +18,8 @@ if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !proce
             {
                 clientID: process.env.GOOGLE_CLIENT_ID,
                 clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-                callbackURL: process.env.GOOGLE_CALLBACK_URL
+                // Force the correct Render backend callback URL, ignoring any incorrect env vars
+                callbackURL: 'https://ezyedutube-backend.onrender.com/api/auth/google/callback'
             },
             async (_accessToken, _refreshToken, profile, done) => {
                 try {

@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { User } = require('../models');
 
 // Use explicit production URL to avoid Vercel preview auth intercept
+// We intentionally do NOT use process.env.CLIENT_URL here because Render dashboard overrides might contain old Vercel preview domains
 const CLIENT_URL = 'https://ezy-edu-tube-education-only-online.vercel.app';
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey_eduhub_2026';
 
