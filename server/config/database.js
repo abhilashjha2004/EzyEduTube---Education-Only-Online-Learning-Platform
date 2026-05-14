@@ -4,14 +4,14 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const sequelize = new Sequelize(
-    process.env.DB_NAME || 'ezyedutube',
-    process.env.DB_USER || 'root',
-    process.env.DB_PASSWORD || 'root',
+    process.env.MYSQLDATABASE || process.env.DB_NAME || 'railway',
+    process.env.MYSQLUSER || process.env.DB_USER || 'root',
+    process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '',
     {
-        host: process.env.DB_HOST || '127.0.0.1',
-        port: process.env.DB_PORT || 3306,
+        host: process.env.MYSQLHOST || process.env.DB_HOST || '127.0.0.1',
+        port: process.env.MYSQLPORT || process.env.DB_PORT || 3306,
         dialect: 'mysql',
-        logging: false, // Set to console.log to see SQL queries
+        logging: false,
         pool: {
             max: 5,
             min: 0,
