@@ -76,9 +76,15 @@ const Home = () => {
     const searchQuery = searchParams.get('search') || '';
 
     useEffect(() => {
+        console.log(`[Home.jsx] Fetching videos from: ${import.meta.env.VITE_API_URL}/api/videos`);
         axios.get(`${import.meta.env.VITE_API_URL}/api/videos`)
-            .then(res => setVideos(res.data))
-            .catch(err => console.error('Failed to fetch videos', err))
+            .then(res => {
+                console.log(`[Home.jsx] Successfully fetched ${res.data.length} videos from backend.`);
+                setVideos(res.data);
+            })
+            .catch(err => {
+                console.error('[Home.jsx] Failed to fetch videos:', err.response?.data || err.message);
+            })
             .finally(() => setLoading(false));
     }, []);
 

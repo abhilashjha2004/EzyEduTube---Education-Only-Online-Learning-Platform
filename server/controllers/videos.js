@@ -85,6 +85,9 @@ const formatVideo = (video) => ({
 // ─── GET ALL VIDEOS ────────────────────────────────────────────────────────────
 const getAllVideos = async (req, res) => {
     try {
+        console.log(`[GET /api/videos] Request received. User authenticated: ${req.user ? 'Yes (' + req.user.id + ')' : 'No (Guest)'}`);
+        
+        // Fetching all videos globally without filtering by logged-in user or history
         const videos = await Video.findAll({
             include: [
                 { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
@@ -92,8 +95,11 @@ const getAllVideos = async (req, res) => {
             ],
             order: [['createdAt', 'DESC']]
         });
+        
+        console.log(`[GET /api/videos] Successfully fetched ${videos.length} videos from the global Video table.`);
         res.json(videos.map(formatVideo));
     } catch (err) {
+        console.error('[GET /api/videos] Error fetching videos:', err.message);
         res.status(500).json({ message: err.message });
     }
 };
