@@ -47,7 +47,8 @@ const isEducationalLink = (url) => {
 const checkYouTubeCategory = async (url) => {
     try {
         const { data } = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36' },
+            timeout: 5000 // Prevent hanging requests from causing 504 Gateway Timeout
         });
         const $ = cheerio.load(data);
         const genre = $('meta[itemprop="genre"]').attr('content');
@@ -58,12 +59,20 @@ const checkYouTubeCategory = async (url) => {
         const description = $('meta[name="description"]').attr('content') || '';
 
         const EDU_CATEGORIES = ['Education', 'Science & Technology', 'Howto & Style', 'News & Politics', 'Nonprofits & Activism'];
+        let isEdu = EDU_CATEGORIES.includes(foundCategory);
+        if (foundCategory === 'Unknown') isEdu = true; // Let AIClassifier decide if category is missing
+
         return { 
-            isEdu: EDU_CATEGORIES.includes(foundCategory), 
+            isEdu, 
             fetchedTitle: title, 
             fetchedDesc: description 
         };
-    } catch { return { isEdu: false, fetchedTitle: '', fetchedDesc: '' }; }
+    } catch (error) { 
+        console.error('YouTube Fetch Warning (non-fatal):', error.message);
+        // If YouTube blocks the request (e.g., 429 Too Many Requests), don't fail the upload.
+        // Instead, assume true and let the AIClassifier handle title/desc validation.
+        return { isEdu: true, fetchedTitle: '', fetchedDesc: '' }; 
+    }
 };
 
 // ─── Helper ────────────────────────────────────────────────────────────────────
@@ -196,6 +205,7 @@ const uploadVideo = async (req, res) => {
         const newVideo = await Video.create({
             title: req.body.title,
             description: req.body.description || '',
+            subject: req.body.subject || 'General',
             videoUrl,
             thumbnailUrl,
             sourceType,
@@ -215,8 +225,8 @@ const uploadVideo = async (req, res) => {
         console.log(`✅  Video saved: "${newVideo.title}" | URL: ${videoUrl.slice(0, 60)}`);
         res.status(201).json(formatVideo(newVideo));
     } catch (err) {
-        console.error('Upload Error:', err);
-        res.status(500).json({ message: err.message });
+        console.error('Upload Error Detailed:', err);
+        res.status(500).json({ message: err.message || 'An unexpected error occurred during upload.' });
     }
 };
 

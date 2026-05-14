@@ -35,6 +35,11 @@ const Video = sequelize.define('Video', {
         type: DataTypes.ENUM('upload', 'external'),
         defaultValue: 'upload'
     },
+    subject: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        defaultValue: 'General'
+    },
     orderIndex: {
         type: DataTypes.INTEGER,
         defaultValue: 0

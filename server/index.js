@@ -77,7 +77,7 @@ const startServer = async () => {
         console.log('✅  MySQL connected successfully.');
 
         // Sync models (alter: true updates existing tables without destroying data)
-        //await sequelize.sync({ alter: true });
+        await sequelize.sync({ alter: true });
         console.log('✅ Database synced successfully.');
 
         app.listen(PORT, () => {
