@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Upload as UploadIcon, X, FileText, Image as ImageIcon, Link as LinkIcon, AlertCircle, BookOpen, Info } from 'lucide-react';
+import { Upload as UploadIcon, X, FileText, Image as ImageIcon, Link as LinkIcon, AlertCircle, BookOpen, Info, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 // ── Must match server/models/Video.js enum exactly ──────────────────
@@ -19,7 +19,10 @@ const SUBJECT_OPTIONS = [
 const Upload = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
+    
+    // Upload States
     const [loading, setLoading] = useState(false);
+    const [uploadStatus, setUploadStatus] = useState(''); // 'cloudinary', 'backend', 'success'
     const [uploadProgress, setUploadProgress] = useState(0);
 
     // Form States
@@ -37,6 +40,7 @@ const Upload = () => {
 
     const [thumbnailFile, setThumbnailFile] = useState(null);
     const [resources, setResources] = useState([]);
+    
     const [error, setError] = useState('');
     const [warning, setWarning] = useState('This platform only accepts strictly educational content. Entertainment, gaming, and music will be rejected by our AI moderator.');
 
@@ -92,36 +96,41 @@ const Upload = () => {
     };
 
     const uploadToCloudinaryDirectly = async (file, folder) => {
-        // 1. Get Signature from backend
-        const sigRes = await axios.get(`${import.meta.env.VITE_API_URL}/api/videos/upload-signature${folder === 'ezyedutube/videos' ? '' : '/' + folder.split('/')[1]}`);
-        const { timestamp, signature, cloudName, apiKey } = sigRes.data;
+        try {
+            // 1. Get Signature from backend
+            const sigRes = await axios.get(`${import.meta.env.VITE_API_URL}/api/videos/upload-signature${folder === 'ezyedutube/videos' ? '' : '/' + folder.split('/')[1]}`);
+            const { timestamp, signature, cloudName, apiKey } = sigRes.data;
 
-        // 2. Upload directly to Cloudinary
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('api_key', apiKey);
-        formData.append('timestamp', timestamp);
-        formData.append('signature', signature);
-        formData.append('folder', folder);
-        
-        // Eager transformations for optimization
-        if (folder.includes('videos')) {
-            formData.append('eager', 'q_auto,f_auto,vc_h264');
-            formData.append('eager_async', 'true');
-        }
-
-        const resourceType = folder.includes('videos') ? 'video' : folder.includes('thumbnails') ? 'image' : 'raw';
-
-        const res = await axios.post(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, formData, {
-            onUploadProgress: (progressEvent) => {
-                if (folder.includes('videos')) {
-                    const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-                    setUploadProgress(percentCompleted);
-                }
+            // 2. Upload directly to Cloudinary
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('api_key', apiKey);
+            formData.append('timestamp', timestamp);
+            formData.append('signature', signature);
+            formData.append('folder', folder);
+            
+            // Eager transformations for optimization
+            if (folder.includes('videos')) {
+                formData.append('eager', 'q_auto,f_auto,vc_h264');
+                formData.append('eager_async', 'true');
             }
-        });
 
-        return res.data.secure_url;
+            const resourceType = folder.includes('videos') ? 'video' : folder.includes('thumbnails') ? 'image' : 'raw';
+
+            const res = await axios.post(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, formData, {
+                onUploadProgress: (progressEvent) => {
+                    if (folder.includes('videos')) {
+                        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                        setUploadProgress(percentCompleted);
+                    }
+                }
+            });
+
+            return res.data.secure_url;
+        } catch (err) {
+            console.error("Cloudinary upload error:", err);
+            throw new Error('Failed to upload file to Cloudinary. Please check your network and try again.');
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -134,6 +143,7 @@ const Upload = () => {
         if (uploadMode === 'link' && !externalLink) return setError('Please enter a valid educational link.');
 
         setLoading(true);
+        setUploadStatus('cloudinary');
 
         try {
             let videoUrl = '';
@@ -143,6 +153,7 @@ const Upload = () => {
             // 1. Upload assets to Cloudinary directly from frontend
             if (uploadMode === 'video') {
                 videoUrl = await uploadToCloudinaryDirectly(videoFile, 'ezyedutube/videos');
+                if (!videoUrl) throw new Error("Cloudinary did not return a valid video URL.");
             }
             if (thumbnailFile) {
                 thumbnailUrl = await uploadToCloudinaryDirectly(thumbnailFile, 'ezyedutube/thumbnails');
@@ -155,27 +166,40 @@ const Upload = () => {
             }
 
             // 2. Send metadata to our backend for AI Moderation & DB Saving
-            setUploadProgress(100); // UI visual update
+            setUploadStatus('backend');
+            setUploadProgress(100); 
             
-            const payload = {
-                title,
-                description,
-                subject,
-                isExternal: uploadMode === 'link',
-                externalLink: uploadMode === 'link' ? externalLink : '',
-                videoUrl: uploadMode === 'video' ? videoUrl : '',
-                thumbnailUrl,
-                resourcesUrls: JSON.stringify(resourcesUrls),
-                duration: videoDuration
-            };
+            // Send as FormData so multer intercepts and parses req.body correctly
+            const formData = new FormData();
+            formData.append('title', title);
+            formData.append('description', description);
+            formData.append('subject', subject);
+            formData.append('isExternal', uploadMode === 'link' ? 'true' : 'false');
+            
+            if (uploadMode === 'link') {
+                formData.append('externalLink', externalLink);
+            } else {
+                formData.append('videoUrl', videoUrl);
+            }
 
-            await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/upload`, payload);
-            navigate('/');
+            formData.append('thumbnailUrl', thumbnailUrl);
+            formData.append('resourcesUrls', JSON.stringify(resourcesUrls));
+            formData.append('duration', videoDuration);
+
+            await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/upload`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            
+            setUploadStatus('success');
+            setTimeout(() => {
+                navigate('/');
+            }, 3000);
+
         } catch (err) {
             console.error(err);
             setError(err.response?.data?.message || err.message || 'Upload failed. Please try again.');
-        } finally {
             setLoading(false);
+            setUploadStatus('');
             setUploadProgress(0);
         }
     };
@@ -200,6 +224,13 @@ const Upload = () => {
                     {error}
                 </div>
             )}
+            
+            {uploadStatus === 'success' && (
+                <div className="bg-green-500/10 border border-green-500 text-green-600 p-4 rounded-xl mb-6 flex items-center gap-2">
+                    <CheckCircle2 size={20} />
+                    Video submitted successfully! It is now pending AI moderation.
+                </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-6">
 
@@ -209,19 +240,21 @@ const Upload = () => {
                         <label className="block text-sm font-medium mb-1">Title</label>
                         <input
                             type="text"
-                            className="w-full p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-700 focus:ring-2 focus:ring-red-500 outline-none transition"
+                            className="w-full p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-700 focus:ring-2 focus:ring-red-500 outline-none transition disabled:opacity-50"
                             value={title}
                             onChange={e => setTitle(e.target.value)}
                             required
+                            disabled={loading}
                             placeholder="e.g. Introduction to Data Science"
                         />
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Description</label>
                         <textarea
-                            className="w-full p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-700 h-28 focus:ring-2 focus:ring-red-500 outline-none transition resize-none"
+                            className="w-full p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-700 h-28 focus:ring-2 focus:ring-red-500 outline-none transition resize-none disabled:opacity-50"
                             value={description}
                             onChange={e => setDescription(e.target.value)}
+                            disabled={loading}
                             placeholder="Describe your content in detail. This helps our AI verify its educational value."
                         />
                     </div>
@@ -236,7 +269,8 @@ const Upload = () => {
                     <select
                         value={subject}
                         onChange={e => setSubject(e.target.value)}
-                        className="w-full p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-orange-400 outline-none transition text-sm cursor-pointer"
+                        disabled={loading}
+                        className="w-full p-3 rounded-lg border bg-zinc-50 dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-orange-400 outline-none transition text-sm cursor-pointer disabled:opacity-50"
                     >
                         {SUBJECT_OPTIONS.map(({ group, options }) => (
                             <optgroup key={group} label={`── ${group} ──`}>
@@ -254,15 +288,17 @@ const Upload = () => {
                     <div className="flex bg-zinc-100 dark:bg-zinc-800 p-1 rounded-lg w-fit">
                         <button
                             type="button"
+                            disabled={loading}
                             onClick={() => setUploadMode('video')}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${uploadMode === 'video' ? 'bg-white dark:bg-zinc-600 shadow text-black dark:text-white' : 'text-zinc-500'}`}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${uploadMode === 'video' ? 'bg-white dark:bg-zinc-600 shadow text-black dark:text-white' : 'text-zinc-500'} disabled:opacity-50`}
                         >
                             Upload Video
                         </button>
                         <button
                             type="button"
+                            disabled={loading}
                             onClick={() => setUploadMode('link')}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${uploadMode === 'link' ? 'bg-white dark:bg-zinc-600 shadow text-black dark:text-white' : 'text-zinc-500'}`}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${uploadMode === 'link' ? 'bg-white dark:bg-zinc-600 shadow text-black dark:text-white' : 'text-zinc-500'} disabled:opacity-50`}
                         >
                             External Link
                         </button>
@@ -273,11 +309,11 @@ const Upload = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
                     {uploadMode === 'video' ? (
-                        <div className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-6 text-center hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition relative group">
+                        <div className={`border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-6 text-center transition relative group ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}>
                             <UploadIcon className="mx-auto h-8 w-8 text-red-500 mb-2 transition-transform group-hover:-translate-y-1" />
-                            <label className="block text-sm font-medium cursor-pointer">
+                            <label className={`block text-sm font-medium ${loading ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                                 <span className="text-red-500 font-bold hover:underline">Choose Video File</span>
-                                <input type="file" accept="video/mp4,video/webm,video/quicktime" hidden onChange={handleVideoFileChange} />
+                                <input type="file" accept="video/mp4,video/webm,video/quicktime" hidden disabled={loading} onChange={handleVideoFileChange} />
                             </label>
                             {videoFile ? (
                                 <p className="text-xs mt-2 text-green-600 font-medium truncate bg-green-100 dark:bg-green-900/30 py-1 px-2 rounded">{videoFile.name} ({videoDuration}s)</p>
@@ -286,7 +322,7 @@ const Upload = () => {
                             )}
                         </div>
                     ) : (
-                        <div className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-6 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition">
+                        <div className={`border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-6 transition ${loading ? 'opacity-50' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}>
                             <LinkIcon className="mx-auto h-8 w-8 text-blue-500 mb-2" />
                             <label className="block text-sm font-medium mb-1">External Educational Link</label>
                             <input
@@ -294,6 +330,7 @@ const Upload = () => {
                                 placeholder="https://youtube.com/watch?v=..."
                                 className="w-full p-2 bg-transparent border-b border-zinc-300 dark:border-zinc-600 focus:border-blue-500 outline-none text-center text-sm"
                                 value={externalLink}
+                                disabled={loading}
                                 onChange={e => setExternalLink(e.target.value)}
                             />
                             <p className="text-xs text-zinc-400 mt-2 text-center">YouTube, Vimeo, Coursera only.</p>
@@ -301,11 +338,11 @@ const Upload = () => {
                     )}
 
                     {/* Thumbnail Upload */}
-                    <div className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-6 text-center hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition relative group">
+                    <div className={`border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl p-6 text-center transition relative group ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}>
                         <ImageIcon className="mx-auto h-8 w-8 text-purple-500 mb-2 transition-transform group-hover:-translate-y-1" />
-                        <label className="block text-sm font-medium cursor-pointer">
+                        <label className={`block text-sm font-medium ${loading ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                             <span className="text-purple-500 font-bold hover:underline">Upload Thumbnail</span>
-                            <input type="file" accept="image/*" hidden onChange={handleThumbnailChange} />
+                            <input type="file" accept="image/*" hidden disabled={loading} onChange={handleThumbnailChange} />
                         </label>
                         {thumbnailFile ? (
                             <p className="text-xs mt-2 text-green-600 font-medium truncate bg-green-100 dark:bg-green-900/30 py-1 px-2 rounded">{thumbnailFile.name}</p>
@@ -316,13 +353,13 @@ const Upload = () => {
                 </div>
 
                 {/* Resources */}
-                <div>
+                <div className={loading ? 'opacity-50 pointer-events-none' : ''}>
                     <label className="block text-sm font-medium mb-2">Practice Material (PDF/DOC)</label>
                     <div className="flex items-center gap-4 mb-4">
                         <label className="px-4 py-2 bg-zinc-100 dark:bg-zinc-800 rounded-lg cursor-pointer text-sm font-medium hover:opacity-80 transition flex items-center gap-2">
                             <FileText size={16} />
                             Attach Files
-                            <input type="file" multiple accept=".pdf,.doc,.docx" hidden onChange={handleResourceChange} />
+                            <input type="file" multiple accept=".pdf,.doc,.docx" hidden disabled={loading} onChange={handleResourceChange} />
                         </label>
                     </div>
                     <div className="space-y-2">
@@ -342,7 +379,7 @@ const Upload = () => {
 
                 {/* Submit & Progress */}
                 <div className="pt-4">
-                    {loading && uploadMode === 'video' && uploadProgress > 0 && uploadProgress < 100 && (
+                    {loading && uploadStatus === 'cloudinary' && uploadMode === 'video' && (
                         <div className="mb-4">
                             <div className="flex justify-between text-xs text-zinc-500 mb-1">
                                 <span>Uploading to Cloudinary...</span>
@@ -354,21 +391,21 @@ const Upload = () => {
                         </div>
                     )}
                     
-                    {loading && uploadProgress === 100 && (
+                    {loading && uploadStatus === 'backend' && (
                         <div className="mb-4 text-center text-sm font-medium text-orange-500 animate-pulse">
-                            Processing AI Educational Moderation...
+                            AI moderation in progress...
                         </div>
                     )}
 
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={loading || uploadStatus === 'success'}
                         className="w-full py-3 bg-gradient-to-r from-red-600 to-orange-500 hover:opacity-90 text-white rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
                     >
                         {loading ? (
                             <>
                                 <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                {uploadProgress < 100 ? 'Uploading...' : 'Verifying...'}
+                                {uploadStatus === 'cloudinary' ? 'Uploading...' : 'Verifying...'}
                             </>
                         ) : 'Publish to EzyEduTube'}
                     </button>
