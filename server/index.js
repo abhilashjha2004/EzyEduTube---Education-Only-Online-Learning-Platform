@@ -85,7 +85,7 @@ const startServer = async () => {
             // REMOVED alter: true. It causes duplicate FK bugs in MySQL production environments.
             // sequelize.sync() is production-safe: it issues CREATE TABLE IF NOT EXISTS,
             // which automatically creates missing tables without crashing on existing constraints.
-            await sequelize.sync();
+            //await sequelize.sync();
             console.log('✅  Database synced successfully. Missing tables created.');
         } catch (syncErr) {
             console.error('❌  Sequelize Sync Failed!');
