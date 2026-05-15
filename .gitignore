@@ -26,6 +26,3 @@ Thumbs.db
 *-player-script.js
 
 
-server/.env.docker
-
-client/.env.docker
