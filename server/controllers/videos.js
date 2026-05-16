@@ -208,7 +208,7 @@ const uploadVideo = async (req, res) => {
             isExternal
         });
 
-        console.log(`[UPLOAD DEBUG] AIClassifier Result: Allowed=${aiResult.allowed}, Score=${aiResult.score}`);
+        console.log("[MODERATION RESULT]", aiResult);
 
         if (!aiResult.allowed) {
             console.log(`[UPLOAD DEBUG] ❌ Moderation Decision: REJECTED`);
@@ -236,9 +236,20 @@ const uploadVideo = async (req, res) => {
             }
             
             // Reject request with proper error message. Prevent DB save.
-            console.log(`[UPLOAD DEBUG] Request rejected with 400. DB save prevented.`);
+            console.log("[DB INSERT BLOCKED]");
             return res.status(400).json({ 
-                message: `Upload Rejected: ${aiResult.reason}` 
+                success: false,
+                message: "Non-educational content detected",
+                reason: aiResult.reason
+            });
+        }
+
+        // Final Safeguard before DB insertion
+        if (!aiResult.allowed) {
+            console.log("[DB INSERT BLOCKED]");
+            return res.status(400).json({
+                success: false,
+                message: "Non-educational content detected"
             });
         }
 
@@ -264,7 +275,10 @@ const uploadVideo = async (req, res) => {
             approvedAt: new Date()
         });
 
+        console.log("[VIDEO SAVED]");
+
         res.status(201).json({
+            success: true,
             message: "Upload successful. Video passed strict AI moderation.",
             video: formatVideo(newVideo)
         });
