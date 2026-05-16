@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { Video, Comment, User, Course, Document } = require('../models');
-const { uploadToCloudinary } = require('../config/cloudinary');
+const { uploadToCloudinary, cloudinary } = require('../config/cloudinary');
 const AIClassifier = require('../services/AIClassifier');
 
 // ─── Cloudinary availability check ────────────────────────────────────────────
@@ -150,7 +150,7 @@ const getVideoById = async (req, res) => {
 
 // ─── UPLOAD VIDEO ─────────────────────────────────────────────────────────────
 const YouTubeValidator = require('../services/YouTubeValidator');
-const ModerationQueue = require('../services/ModerationQueue');
+
 
 const uploadVideo = async (req, res) => {
     try {
@@ -192,7 +192,48 @@ const uploadVideo = async (req, res) => {
         // Thumbnail
         let thumbnailUrl = req.body.thumbnailUrl || '';
 
-        // Create video record in MySQL (Status: pending)
+        // Run AI Moderation SYNCHRONOUSLY before saving to DB
+        console.log(`⏳ Starting strict synchronous AI moderation for: "${title}"`);
+        
+        const aiResult = await AIClassifier.analyzeVideoAsync({
+            videoId: 'temp', // Not saved yet
+            videoUrl,
+            title,
+            description,
+            tags,
+            isExternal
+        });
+
+        if (!aiResult.allowed) {
+            console.log(`[Moderation] Video rejected: ${aiResult.reason}`);
+            
+            // Auto-delete from Cloudinary if it was a local file upload (not an external link)
+            if (!isExternal && videoUrl.includes('cloudinary.com')) {
+                try {
+                    // Extract public ID from Cloudinary URL (e.g. ezyedutube/videos/filename)
+                    const urlParts = videoUrl.split('/');
+                    const filenameWithExt = urlParts.pop();
+                    const folder = urlParts.pop(); // videos
+                    const parentFolder = urlParts.pop(); // ezyedutube
+                    const filename = filenameWithExt.split('.')[0];
+                    const publicId = `${parentFolder}/${folder}/${filename}`;
+                    
+                    console.log(`[Cleanup] Auto-deleting rejected video from Cloudinary: ${publicId}`);
+                    await cloudinary.uploader.destroy(publicId, { resource_type: "video" });
+                } catch (cleanupErr) {
+                    console.error('[Cleanup] Failed to delete video from Cloudinary:', cleanupErr);
+                }
+            }
+            
+            // Reject request with proper error message. Prevent DB save.
+            return res.status(400).json({ 
+                message: `Upload Rejected: ${aiResult.reason}` 
+            });
+        }
+
+        console.log(`✅ Moderation passed for: "${title}". Saving to database.`);
+
+        // Create approved video record in MySQL
         const newVideo = await Video.create({
             title: title,
             description: description,
@@ -204,25 +245,15 @@ const uploadVideo = async (req, res) => {
             uploaderId,
             courseId: req.body.courseId || null,
             orderIndex: 0,
-            status: 'pending', // Async moderation required
-            isEducational: false,
-            moderationScore: 0,
-            reviewedByAI: false
+            status: 'approved',
+            isEducational: true,
+            moderationScore: aiResult.score,
+            reviewedByAI: true,
+            approvedAt: new Date()
         });
 
-        // Add to Moderation Queue for background processing
-        ModerationQueue.add({
-            videoId: newVideo.id,
-            videoUrl: newVideo.videoUrl,
-            title: newVideo.title,
-            description: newVideo.description,
-            tags: tags,
-            isExternal: isExternal
-        });
-
-        console.log(`⏳ Video queued for async moderation: "${newVideo.title}" (ID: ${newVideo.id})`);
         res.status(201).json({
-            message: "Upload successful. Video is pending AI moderation and will be published shortly.",
+            message: "Upload successful. Video passed strict AI moderation.",
             video: formatVideo(newVideo)
         });
     } catch (err) {
