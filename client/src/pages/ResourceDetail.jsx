@@ -286,6 +286,7 @@ const ResourceDetail = () => {
     const [loading, setLoading] = useState(true);
     const [comment, setComment] = useState('');
     const [comments, setComments] = useState([]);
+    const [deletingCommentId, setDeletingCommentId] = useState(null);
     const [allVideos, setAllVideos] = useState([]);
 
     const [liked, setLiked] = useState(false);
@@ -373,37 +374,93 @@ const ResourceDetail = () => {
     }, [videoData]);
 
     const handleLike = useCallback(async () => {
-        if (!user) return;
+        if (!user || liking) return;
+        const loggedInUserId = user._id || user.id;
+
+        // Optimistic UI updates
+        const nextLiked = !liked;
+        const nextLikeCount = liked ? Math.max(0, likeCount - 1) : likeCount + 1;
+        
+        setLiked(nextLiked);
+        setLikeCount(nextLikeCount);
         setLiking(true);
+
         try {
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/${id}/like`, { userId: user._id });
-            setLiked(res.data.liked);
-            setLikeCount(res.data.likes);
-        } catch { }
-        finally { setLiking(false); }
-    }, [id, user]);
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/${id}/like`, { userId: loggedInUserId });
+            const backendLikes = res.data.likes;
+            if (Array.isArray(backendLikes)) {
+                setLiked(backendLikes.includes(loggedInUserId));
+                setLikeCount(backendLikes.length);
+            } else {
+                setLiked(res.data.liked);
+                setLikeCount(res.data.likes);
+            }
+        } catch (err) {
+            // Rollback on failure
+            setLiked(liked);
+            setLikeCount(likeCount);
+            console.error('Like error:', err);
+        } finally {
+            setLiking(false);
+        }
+    }, [id, user, liked, likeCount, liking]);
 
     const handleSubscribe = useCallback(async () => {
-        if (!user) return;
+        if (!user || subscribing) return;
+        const loggedInUserId = user._id || user.id;
+
+        // Optimistic UI updates
+        const nextSubscribed = !subscribed;
+        const nextSubCount = subscribed ? Math.max(0, subCount - 1) : subCount + 1;
+
+        setSubscribed(nextSubscribed);
+        setSubCount(nextSubCount);
         setSubscribing(true);
+
         try {
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/${id}/subscribe`, { userId: user._id });
-            setSubscribed(res.data.subscribed);
-            setSubCount(res.data.subscribers);
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/${id}/subscribe`, { userId: loggedInUserId });
+            const backendSubscribers = res.data.subscribers;
+            if (Array.isArray(backendSubscribers)) {
+                setSubscribed(backendSubscribers.includes(loggedInUserId));
+                setSubCount(backendSubscribers.length);
+            } else {
+                setSubscribed(res.data.subscribed);
+                setSubCount(res.data.subscribers);
+            }
         } catch (err) {
-            console.error('Subscribe error:', err.response?.data || err.message);
+            // Rollback on failure
+            setSubscribed(subscribed);
+            setSubCount(subCount);
+            console.error('Subscribe error:', err);
+        } finally {
+            setSubscribing(false);
         }
-        finally { setSubscribing(false); }
-    }, [id, user]);
+    }, [id, user, subscribed, subCount, subscribing]);
 
     const handleComment = async (e) => {
         e.preventDefault();
-        if (!comment.trim()) return;
+        if (!comment.trim() || !user) return;
+        const loggedInUserId = user._id || user.id;
         try {
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/${id}/comments`, { userId: user._id, content: comment });
+            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/videos/${id}/comments`, { userId: loggedInUserId, content: comment });
             setComments(prev => [res.data, ...(Array.isArray(prev) ? prev : [])]);
             setComment('');
-        } catch { }
+        } catch (err) {
+            console.error('Comment error:', err);
+        }
+    };
+
+    const handleDeleteComment = async (commentId) => {
+        if (!window.confirm('Delete this comment?')) return;
+        setDeletingCommentId(commentId);
+        try {
+            await axios.delete(`${import.meta.env.VITE_API_URL}/api/videos/comments/${commentId}`);
+            setComments(prev => (Array.isArray(prev) ? prev : []).filter(c => c.id !== commentId && c._id !== commentId));
+        } catch (err) {
+            alert(err.response?.data?.message || 'Failed to delete comment');
+        } finally {
+            setDeletingCommentId(null);
+        }
     };
 
     const handleDelete = async () => {
@@ -531,13 +588,17 @@ const ResourceDetail = () => {
                                     : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-red-300 hover:text-red-500'
                                 } disabled:opacity-50`}
                         >
-                            <AnimatePresence mode="wait">
-                                <motion.span key={liked ? 'h' : 'u'}
-                                    initial={{ scale: 0.6, rotate: -15 }} animate={{ scale: 1, rotate: 0 }}
-                                    transition={{ type: 'spring', stiffness: 400 }}>
-                                    {liked ? <Heart size={16} fill="currentColor" /> : <ThumbsUp size={16} />}
-                                </motion.span>
-                            </AnimatePresence>
+                            {liking ? (
+                                <div className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" />
+                            ) : (
+                                <AnimatePresence mode="wait">
+                                    <motion.span key={liked ? 'h' : 'u'}
+                                        initial={{ scale: 0.6, rotate: -15 }} animate={{ scale: 1, rotate: 0 }}
+                                        transition={{ type: 'spring', stiffness: 400 }}>
+                                        {liked ? <Heart size={16} fill="currentColor" /> : <ThumbsUp size={16} />}
+                                    </motion.span>
+                                </AnimatePresence>
+                            )}
                             <span>{fmtCount(likeCount)}</span>
                             <span className="hidden sm:inline">{liked ? 'Liked' : 'Like'}</span>
                         </motion.button>
@@ -659,20 +720,46 @@ const ResourceDetail = () => {
                             </p>
                         )}
                         <div className="space-y-5">
-                            {(Array.isArray(comments) ? comments : []).map(c => (
-                                <div key={c._id} className="flex gap-3">
-                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                                        {c.user?.username?.[0]?.toUpperCase() || 'U'}
-                                    </div>
-                                    <div>
-                                        <div className="flex items-center gap-2 mb-0.5">
-                                            <span className="font-semibold text-sm">{c.user?.username || 'User'}</span>
-                                            <span className="text-xs text-zinc-400">{formatDistanceToNow(new Date(c.createdAt))} ago</span>
+                            {(Array.isArray(comments) ? comments : []).map(c => {
+                                const loggedInUserId = user?._id || user?.id;
+                                const isCommentOwner = user && (c.userId === loggedInUserId || (c.user && (c.user.id === loggedInUserId || c.user._id === loggedInUserId)));
+                                const isVideoOwner = user && videoData.uploader && (videoData.uploader.id === loggedInUserId || videoData.uploader._id === loggedInUserId || videoData.uploaderId === loggedInUserId);
+                                const canDeleteComment = isCommentOwner || isVideoOwner;
+                                const commentId = c.id || c._id;
+
+                                return (
+                                    <div key={commentId} className="flex gap-3 justify-between items-start group/comment">
+                                        <div className="flex gap-3 min-w-0">
+                                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                                {c.user?.username?.[0]?.toUpperCase() || 'U'}
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                                    <span className="font-semibold text-sm text-zinc-900 dark:text-zinc-100 truncate">{c.user?.username || 'User'}</span>
+                                                    <span className="text-[10px] text-zinc-400">
+                                                        {c.createdAt ? formatDistanceToNow(new Date(c.createdAt), { addSuffix: true }) : 'just now'}
+                                                    </span>
+                                                </div>
+                                                <p className="text-zinc-700 dark:text-zinc-300 text-sm break-words whitespace-pre-wrap">{c.content}</p>
+                                            </div>
                                         </div>
-                                        <p className="text-zinc-800 dark:text-zinc-200 text-sm">{c.content}</p>
+                                        {canDeleteComment && (
+                                            <button 
+                                                onClick={() => handleDeleteComment(commentId)}
+                                                disabled={deletingCommentId === commentId}
+                                                className="text-zinc-400 hover:text-red-500 p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 transition opacity-0 group-hover/comment:opacity-100 disabled:opacity-50 flex-shrink-0"
+                                                title="Delete comment"
+                                            >
+                                                {deletingCommentId === commentId ? (
+                                                    <div className="w-3.5 h-3.5 border border-zinc-400 border-t-red-500 rounded-full animate-spin" />
+                                                ) : (
+                                                    <Trash2 size={14} />
+                                                )}
+                                            </button>
+                                        )}
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 </div>

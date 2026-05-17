@@ -64,10 +64,14 @@ const login = async (req, res) => {
 const getUserById = async (req, res) => {
     try {
         const user = await User.findByPk(req.params.id, {
-            attributes: { exclude: ['password'] }
+            attributes: { exclude: ['password'] },
+            include: [{ model: User, as: 'subscribers', attributes: ['id'] }]
         });
         if (!user) return res.status(404).json({ message: 'User not found' });
-        res.json(safeUser(user));
+        
+        const payload = safeUser(user);
+        payload.subscribers = user.subscribers ? user.subscribers.map(s => s.id) : [];
+        res.json(payload);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }

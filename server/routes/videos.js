@@ -29,6 +29,9 @@ router.delete('/my-video/:id', authMiddleware, videoController.deleteVideoUser);
 // POST COMMENT
 router.post('/:id/comments', videoController.postComment);
 
+// DELETE COMMENT
+router.delete('/comments/:commentId', authMiddleware, videoController.deleteComment);
+
 // LIKE / UNLIKE
 router.post('/:id/like', videoController.likeVideo);
 

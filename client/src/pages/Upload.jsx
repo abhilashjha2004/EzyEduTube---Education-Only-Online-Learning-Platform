@@ -220,12 +220,6 @@ const Upload = () => {
                 </div>
             )}
 
-            {error && (
-                <div className="bg-red-500/10 border border-red-500 text-red-600 p-4 rounded-xl mb-6 flex items-center gap-2">
-                    <AlertCircle size={20} />
-                    {error}
-                </div>
-            )}
 
             {uploadStatus === 'success' && (
                 <div className="bg-green-500/10 border border-green-500 text-green-600 p-4 rounded-xl mb-6 flex items-center gap-2">
@@ -411,6 +405,12 @@ const Upload = () => {
                             </>
                         ) : 'Publish to EzyEduTube'}
                     </button>
+                    {error && (
+                        <div className="mt-4 bg-orange-500/10 border border-orange-500 text-orange-600 dark:text-orange-400 p-4 rounded-xl flex items-start gap-2 text-sm font-medium">
+                            <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+                            <span>{error}</span>
+                        </div>
+                    )}
                     <p className="text-center text-xs text-zinc-400 mt-4">By publishing, you agree to our strict educational content policy.</p>
                 </div>
 

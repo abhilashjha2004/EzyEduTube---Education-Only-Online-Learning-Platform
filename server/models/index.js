@@ -7,6 +7,7 @@ const Enrollment = require('./Enrollment');
 const Progress = require('./Progress');
 const Comment = require('./Comment');
 const Notification = require('./Notification');
+const VideoView = require('./VideoView');
 
 // ─── Associations ─────────────────────────────────────────────────────────────
 
@@ -71,6 +72,13 @@ User.belongsToMany(User, {
 User.belongsToMany(Video, { through: 'Videolikes', as: 'likedVideos', foreignKey: 'userId' });
 Video.belongsToMany(User, { through: 'Videolikes', as: 'likedBy', foreignKey: 'videoId' });
 
+// ─── Video Views (one-to-many) ───────────────────────────────────────────────
+Video.hasMany(VideoView, { foreignKey: 'videoId', as: 'videoViews', onDelete: 'CASCADE' });
+VideoView.belongsTo(Video, { foreignKey: 'videoId', as: 'video' });
+
+User.hasMany(VideoView, { foreignKey: 'userId', as: 'videoViews' });
+VideoView.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
 module.exports = {
     sequelize,
     User,
@@ -80,5 +88,6 @@ module.exports = {
     Enrollment,
     Progress,
     Comment,
-    Notification
+    Notification,
+    VideoView
 };

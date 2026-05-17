@@ -4,7 +4,7 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { Video, Comment, User, Course, Document } = require('../models');
+const { Video, Comment, User, Course, Document, VideoView } = require('../models');
 const { uploadToCloudinary, cloudinary } = require('../config/cloudinary');
 const AIClassifier = require('../services/AIClassifier');
 const MetadataFetcher = require('../services/MetadataFetcher');
@@ -80,7 +80,7 @@ const checkYouTubeCategory = async (url) => {
 const formatVideo = (video) => ({
     ...video.toJSON(),
     _id: video.id,   // backward-compat alias
-    likes: video.likedBy ? video.likedBy.length : 0
+    likes: video.likedBy ? video.likedBy.map(u => u.id) : []
 });
 
 // ─── GET ALL VIDEOS ────────────────────────────────────────────────────────────
@@ -110,7 +110,8 @@ const getAllVideos = async (req, res) => {
             },
             include: [
                 { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
-                { model: Course, as: 'course', attributes: ['id', 'title'] }
+                { model: Course, as: 'course', attributes: ['id', 'title'] },
+                { model: User, as: 'likedBy', attributes: ['id'] }
             ],
             order: [['createdAt', 'DESC']]
         });
@@ -130,6 +131,7 @@ const getVideoById = async (req, res) => {
             include: [
                 { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
                 { model: Course, as: 'course', attributes: ['id', 'title'] },
+                { model: User, as: 'likedBy', attributes: ['id'] },
                 {
                     model: Comment, as: 'comments',
                     include: [{ model: User, as: 'user', attributes: ['id', 'username', 'avatar'] }],
@@ -138,9 +140,6 @@ const getVideoById = async (req, res) => {
             ]
         });
         if (!video) return res.status(404).json({ message: 'Video not found' });
-
-        // Increment views
-        await video.increment('views');
 
         const comments = video.comments || [];
         res.json({ video: formatVideo(video), comments });
@@ -385,7 +384,7 @@ const likeVideo = async (req, res) => {
             include: [{ model: User, as: 'likedBy', attributes: ['id'] }]
         });
 
-        res.json({ likes: updated.likedBy.length, liked: !alreadyLiked });
+        res.json({ likes: updated.likedBy.map(u => u.id), liked: !alreadyLiked });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -421,19 +420,111 @@ const subscribeVideo = async (req, res) => {
             include: [{ model: User, as: 'subscribers', attributes: ['id'] }]
         });
 
-        res.json({ subscribers: updated.subscribers.length, subscribed: !alreadySubbed });
+        res.json({ subscribers: updated.subscribers.map(s => s.id), subscribed: !alreadySubbed });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 };
 
 // ─── INCREMENT VIEW ────────────────────────────────────────────────────────────
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey_eduhub_2026';
+
 const incrementView = async (req, res) => {
     try {
         const video = await Video.findByPk(req.params.id);
         if (!video) return res.status(404).json({ message: 'Video not found' });
-        await video.increment('views');
-        res.json({ views: video.views + 1 });
+
+        // Cooldown period: 24 hours
+        const COOLDOWN_HOURS = 24;
+        const cooldownTime = new Date(Date.now() - COOLDOWN_HOURS * 60 * 60 * 1000);
+
+        // Optional User identification from JWT
+        const authHeader = req.headers.authorization;
+        let userId = null;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split(' ')[1];
+            try {
+                const decoded = jwt.verify(token, JWT_SECRET);
+                userId = decoded.id;
+            } catch (err) {
+                // Ignore, treat as guest
+            }
+        }
+
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+        const userAgent = req.headers['user-agent'] || 'unknown';
+
+        let existingView = null;
+
+        if (userId) {
+            // Registered user tracking: check userId + videoId
+            existingView = await VideoView.findOne({
+                where: {
+                    videoId: video.id,
+                    userId: userId,
+                    viewedAt: {
+                        [Op.gt]: cooldownTime
+                    }
+                }
+            });
+        } else {
+            // Guest user tracking: check ipAddress + userAgent + videoId
+            existingView = await VideoView.findOne({
+                where: {
+                    videoId: video.id,
+                    ipAddress: ipAddress,
+                    userAgent: userAgent,
+                    userId: null,
+                    viewedAt: {
+                        [Op.gt]: cooldownTime
+                    }
+                }
+            });
+        }
+
+        if (existingView) {
+            // Duplicate/refresh detected within 24h: bypass view incrementing
+            return res.json({ views: video.views });
+        }
+
+        // Create view entry
+        await VideoView.create({
+            videoId: video.id,
+            userId: userId,
+            ipAddress: ipAddress,
+            userAgent: userAgent
+        });
+
+        // Increment views
+        await video.increment('views', { by: 1 });
+        const updatedVideo = await Video.findByPk(video.id);
+
+        res.json({ views: updatedVideo.views });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// ─── DELETE COMMENT ────────────────────────────────────────────────────────────
+const deleteComment = async (req, res) => {
+    try {
+        const { commentId } = req.params;
+        const comment = await Comment.findByPk(commentId, {
+            include: [{ model: Video, as: 'video' }]
+        });
+        if (!comment) return res.status(404).json({ message: 'Comment not found' });
+
+        const userId = req.user.id;
+        const isCommentOwner = comment.userId === userId;
+        const isVideoOwner = comment.video && comment.video.uploaderId === userId;
+
+        if (!isCommentOwner && !isVideoOwner) {
+            return res.status(403).json({ message: 'Unauthorized to delete this comment' });
+        }
+
+        await comment.destroy();
+        res.json({ success: true, message: 'Comment deleted successfully' });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -460,5 +551,6 @@ module.exports = {
     likeVideo,
     subscribeVideo,
     incrementView,
+    deleteComment,
     shareVideo
 };
