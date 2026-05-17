@@ -77,49 +77,117 @@ const checkYouTubeCategory = async (url) => {
 };
 
 // ─── Helper ────────────────────────────────────────────────────────────────────
-const formatVideo = (video) => ({
-    ...video.toJSON(),
-    _id: video.id,   // backward-compat alias
-    likes: video.likedBy ? video.likedBy.map(u => u.id) : []
-});
+const formatVideo = (video) => {
+    try {
+        const json = video.toJSON ? video.toJSON() : video;
+        let likesArray = [];
+        if (video.likedBy && Array.isArray(video.likedBy)) {
+            likesArray = video.likedBy.map(u => u.id || u._id || u);
+        } else if (json.likedBy && Array.isArray(json.likedBy)) {
+            likesArray = json.likedBy.map(u => u.id || u._id || u);
+        }
+        return {
+            ...json,
+            _id: json.id,
+            likes: likesArray
+        };
+    } catch (err) {
+        console.error('[formatVideo Debug] Warning formatting video:', err.message);
+        return {
+            ...video,
+            _id: video.id,
+            likes: []
+        };
+    }
+};
 
 // ─── GET ALL VIDEOS ────────────────────────────────────────────────────────────
-//const { Op } = require('sequelize'); // Make sure Op is available
-
 const getAllVideos = async (req, res) => {
     try {
         console.log(`[GET /api/videos] Request received. User authenticated: ${req.user ? 'Yes (' + req.user.id + ')' : 'No (Guest)'}`);
 
         // Determine moderation feature launch date (e.g. May 11, 2026) for legacy null check
         const MODERATION_LAUNCH_DATE = new Date('2026-05-11T00:00:00.000Z');
+        const whereClause = {
+            [Op.or]: [
+                { status: 'approved', isEducational: true },
+                { status: 'approved', reviewedByAI: false },
+                {
+                    status: null,
+                    createdAt: { [Op.lt]: MODERATION_LAUNCH_DATE }
+                }
+            ]
+        };
 
-        // Fetching videos globally using strict visibility rules:
-        // 1. Fully approved AI videos
-        // 2. Legacy approved videos (before AI requirement)
-        // 3. Extremely legacy videos (null status before launch date)
-        const videos = await Video.findAll({
-            where: {
-                [Op.or]: [
-                    { status: 'approved', isEducational: true },
-                    { status: 'approved', reviewedByAI: false },
-                    {
-                        status: null,
-                        createdAt: { [Op.lt]: MODERATION_LAUNCH_DATE }
+        let videos = [];
+        try {
+            console.log('[GET /api/videos] Attempting to query Video.findAll with full associations...');
+            videos = await Video.findAll({
+                where: whereClause,
+                include: [
+                    { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
+                    { model: Course, as: 'course', attributes: ['id', 'title'] },
+                    { model: User, as: 'likedBy', attributes: ['id'] }
+                ],
+                order: [['createdAt', 'DESC']]
+            });
+            console.log(`[GET /api/videos] Rich query successful. Fetched ${videos.length} videos.`);
+        } catch (queryErr) {
+            console.error('[GET /api/videos] Rich query failed, executing fallback query without includes:', queryErr.message);
+            // Fallback: Query all videos without associations to guarantee API returns data.
+            const rawVideos = await Video.findAll({
+                where: whereClause,
+                order: [['createdAt', 'DESC']]
+            });
+            
+            // Populating minimal mock/safe uploader, course, and likes for each raw video to prevent React crashes.
+            videos = await Promise.all(rawVideos.map(async (v) => {
+                const videoJson = v.toJSON ? v.toJSON() : v;
+                
+                // Safe uploader fetch fallback
+                let uploader = null;
+                if (videoJson.uploaderId) {
+                    try {
+                        uploader = await User.findByPk(videoJson.uploaderId, {
+                            attributes: ['id', 'username', 'avatar']
+                        });
+                    } catch (e) {
+                        console.error(`[GET /api/videos] Safe uploader fetch failed for user ${videoJson.uploaderId}:`, e.message);
                     }
-                ]
-            },
-            include: [
-                { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
-                { model: Course, as: 'course', attributes: ['id', 'title'] },
-                { model: User, as: 'likedBy', attributes: ['id'] }
-            ],
-            order: [['createdAt', 'DESC']]
-        });
+                }
+                
+                // Safe course fetch fallback
+                let course = null;
+                if (videoJson.courseId) {
+                    try {
+                        course = await Course.findByPk(videoJson.courseId, {
+                            attributes: ['id', 'title']
+                        });
+                    } catch (e) {
+                        console.error(`[GET /api/videos] Safe course fetch failed for course ${videoJson.courseId}:`, e.message);
+                    }
+                }
 
-        console.log(`[GET /api/videos] Successfully fetched ${videos.length} videos from the global Video table.`);
+                // Safe likes fetch fallback
+                let likedBy = [];
+                try {
+                    likedBy = await v.getLikedBy({ attributes: ['id'] }).catch(() => []);
+                } catch (e) {
+                    console.error('[GET /api/videos] Safe likes fetch failed:', e.message);
+                }
+
+                v.uploader = uploader;
+                v.course = course;
+                v.likedBy = likedBy;
+                
+                return v;
+            }));
+            console.log(`[GET /api/videos] Fallback query processed ${videos.length} videos successfully.`);
+        }
+
         res.json(videos.map(formatVideo));
     } catch (err) {
-        console.error('[GET /api/videos] Error fetching videos:', err.message);
+        console.error('[GET /api/videos] Critical global error fetching videos:', err.message);
         res.status(500).json({ message: err.message });
     }
 };
@@ -127,23 +195,66 @@ const getAllVideos = async (req, res) => {
 // ─── GET SINGLE VIDEO ─────────────────────────────────────────────────────────
 const getVideoById = async (req, res) => {
     try {
-        const video = await Video.findByPk(req.params.id, {
-            include: [
-                { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
-                { model: Course, as: 'course', attributes: ['id', 'title'] },
-                { model: User, as: 'likedBy', attributes: ['id'] },
-                {
-                    model: Comment, as: 'comments',
-                    include: [{ model: User, as: 'user', attributes: ['id', 'username', 'avatar'] }],
-                    order: [['createdAt', 'DESC']]
+        console.log(`[GET /api/videos/${req.params.id}] Fetching video...`);
+        let video = null;
+        try {
+            video = await Video.findByPk(req.params.id, {
+                include: [
+                    { model: User, as: 'uploader', attributes: ['id', 'username', 'avatar'] },
+                    { model: Course, as: 'course', attributes: ['id', 'title'] },
+                    { model: User, as: 'likedBy', attributes: ['id'] },
+                    {
+                        model: Comment, as: 'comments',
+                        include: [{ model: User, as: 'user', attributes: ['id', 'username', 'avatar'] }],
+                        order: [['createdAt', 'DESC']]
+                    }
+                ]
+            });
+        } catch (queryErr) {
+            console.error(`[GET /api/videos/${req.params.id}] Rich single-query failed, executing fallback:`, queryErr.message);
+            const rawVideo = await Video.findByPk(req.params.id);
+            if (rawVideo) {
+                const videoJson = rawVideo.toJSON ? rawVideo.toJSON() : rawVideo;
+                
+                let uploader = null;
+                if (videoJson.uploaderId) {
+                    uploader = await User.findByPk(videoJson.uploaderId, { attributes: ['id', 'username', 'avatar'] }).catch(() => null);
                 }
-            ]
-        });
+                
+                let course = null;
+                if (videoJson.courseId) {
+                    course = await Course.findByPk(videoJson.courseId, { attributes: ['id', 'title'] }).catch(() => null);
+                }
+                
+                let likedBy = [];
+                try {
+                    likedBy = await rawVideo.getLikedBy({ attributes: ['id'] }).catch(() => []);
+                } catch { }
+                
+                let comments = [];
+                try {
+                    comments = await Comment.findAll({
+                        where: { videoId: req.params.id },
+                        include: [{ model: User, as: 'user', attributes: ['id', 'username', 'avatar'] }],
+                        order: [['createdAt', 'DESC']]
+                    }).catch(() => []);
+                } catch { }
+
+                rawVideo.uploader = uploader;
+                rawVideo.course = course;
+                rawVideo.likedBy = likedBy;
+                rawVideo.comments = comments;
+                
+                video = rawVideo;
+            }
+        }
+
         if (!video) return res.status(404).json({ message: 'Video not found' });
 
         const comments = video.comments || [];
         res.json({ video: formatVideo(video), comments });
     } catch (err) {
+        console.error(`[GET /api/videos/${req.params.id}] Critical global error:`, err.message);
         res.status(500).json({ message: err.message });
     }
 };

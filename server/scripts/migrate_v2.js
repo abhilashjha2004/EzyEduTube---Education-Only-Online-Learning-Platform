@@ -6,7 +6,7 @@ const migrate = async () => {
         console.log('✅ Connected to database for V2 migration.');
 
         const queryInterface = sequelize.getQueryInterface();
-        const tableInfo = await queryInterface.describeTable('videos');
+        const tableInfo = await queryInterface.describeTable('Videos');
 
         const columnsToAdd = [
             { name: 'status', type: sequelize.Sequelize.ENUM('pending', 'approved', 'rejected'), defaultValue: 'pending' },
@@ -16,7 +16,7 @@ const migrate = async () => {
 
         for (const col of columnsToAdd) {
             if (!tableInfo[col.name]) {
-                await queryInterface.addColumn('videos', col.name, {
+                await queryInterface.addColumn('Videos', col.name, {
                     type: col.type,
                     defaultValue: col.defaultValue,
                     allowNull: col.allowNull !== undefined ? col.allowNull : true,

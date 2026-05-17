@@ -28,7 +28,7 @@ const Notification = sequelize.define('Notification', {
         defaultValue: false
     }
 }, {
-    tableName: 'notifications',
+    tableName: 'Notifications',
     freezeTableName: true,
     timestamps: true
 });

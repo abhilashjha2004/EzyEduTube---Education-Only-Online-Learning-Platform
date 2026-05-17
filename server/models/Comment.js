@@ -12,7 +12,7 @@ const Comment = sequelize.define('Comment', {
         allowNull: false
     }
 }, {
-    tableName: 'comments',
+    tableName: 'Comments',
     freezeTableName: true,
     timestamps: true
 });

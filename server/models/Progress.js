@@ -16,7 +16,7 @@ const Progress = sequelize.define('Progress', {
         defaultValue: false
     }
 }, {
-    tableName: 'progresses',
+    tableName: 'Progresses',
     freezeTableName: true,
     timestamps: true
 });

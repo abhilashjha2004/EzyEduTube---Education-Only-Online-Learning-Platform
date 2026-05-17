@@ -20,7 +20,7 @@ const Document = sequelize.define('Document', {
         defaultValue: 'pdf'
     }
 }, {
-    tableName: 'documents',
+    tableName: 'Documents',
     freezeTableName: true,
     timestamps: true
 });

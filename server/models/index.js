@@ -69,8 +69,8 @@ User.belongsToMany(User, {
 });
 
 // ─── Video Likes (many-to-many) ────────────────────────────────────────────────
-User.belongsToMany(Video, { through: 'Videolikes', as: 'likedVideos', foreignKey: 'userId' });
-Video.belongsToMany(User, { through: 'Videolikes', as: 'likedBy', foreignKey: 'videoId' });
+User.belongsToMany(Video, { through: 'VideoLikes', as: 'likedVideos', foreignKey: 'userId' });
+Video.belongsToMany(User, { through: 'VideoLikes', as: 'likedBy', foreignKey: 'videoId' });
 
 // ─── Video Views (one-to-many) ───────────────────────────────────────────────
 Video.hasMany(VideoView, { foreignKey: 'videoId', as: 'videoViews', onDelete: 'CASCADE' });

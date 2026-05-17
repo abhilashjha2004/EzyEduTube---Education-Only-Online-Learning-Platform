@@ -7,7 +7,7 @@ const migrate = async () => {
 
         const queryInterface = sequelize.getQueryInterface();
 
-        const tableInfo = await queryInterface.describeTable('videos');
+        const tableInfo = await queryInterface.describeTable('Videos');
 
         const columnsToAdd = [
             { name: 'isEducational', type: sequelize.Sequelize.BOOLEAN, defaultValue: false },
@@ -19,7 +19,7 @@ const migrate = async () => {
 
         for (const col of columnsToAdd) {
             if (!tableInfo[col.name]) {
-                await queryInterface.addColumn('videos', col.name, {
+                await queryInterface.addColumn('Videos', col.name, {
                     type: col.type,
                     defaultValue: col.defaultValue,
                     allowNull: col.allowNull !== undefined ? col.allowNull : true,
